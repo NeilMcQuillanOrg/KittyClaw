@@ -113,6 +113,56 @@ public sealed class NetworkAccessTests
         }
     }
 
+    [Theory]
+    [InlineData(true, HttpStatusCode.OK)]
+    [InlineData(false, HttpStatusCode.BadRequest)]
+    public async Task Saved_enrollment_preserves_explicit_hosts_only_in_trusted_network_mode(
+        bool trustedNetwork, HttpStatusCode expected)
+    {
+        using TempDir directory = new();
+        IDataProtectionProvider protection = DataProtectionProvider.Create(
+            new DirectoryInfo(Path.Combine(directory.Path, "network-keys")), options =>
+            {
+                if (OperatingSystem.IsWindows()) options.ProtectKeysWithDpapi();
+            });
+        NetworkAccessService access = new(directory.Path, protection, 5233);
+        (string enrollment, byte[] key) = Enrollment(access);
+        Assert.True(access.Enable(enrollment, Code(key, DateTimeOffset.UtcNow)));
+        Dictionary<string, string?> settings = new()
+        {
+            ["KITTYCLAW_DATA_DIR"] = directory.Path,
+            ["KITTYCLAW_DESKTOP"] = "false",
+            ["ASPNETCORE_URLS"] = "http://127.0.0.1:0",
+            ["NetworkAccess__TrustedNetwork"] = trustedNetwork.ToString(),
+            ["AllowedHosts"] = "localhost;trusted-network.test"
+        };
+        Dictionary<string, string?> previous = settings.ToDictionary(
+            setting => setting.Key, setting => Environment.GetEnvironmentVariable(setting.Key));
+        try
+        {
+            foreach (KeyValuePair<string, string?> setting in settings)
+                Environment.SetEnvironmentVariable(setting.Key, setting.Value);
+            await using StartupFactory factory = new();
+            using HttpClient client = factory.CreateClient(new WebApplicationFactoryClientOptions
+            {
+                AllowAutoRedirect = false
+            });
+
+            using HttpRequestMessage request = new(HttpMethod.Get, "http://trusted-network.test/api/projects");
+            request.Headers.Add("Origin", "http://trusted-network.test");
+            Assert.Equal(expected, (await client.SendAsync(request)).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await client.GetAsync("http://unlisted.test/api/projects")).StatusCode);
+            Assert.Equal(trustedNetwork ? HttpStatusCode.Forbidden : HttpStatusCode.BadRequest,
+                (await client.GetAsync("http://trusted-network.test/network-setup")).StatusCode);
+        }
+        finally
+        {
+            foreach (KeyValuePair<string, string?> setting in previous)
+                Environment.SetEnvironmentVariable(setting.Key, setting.Value);
+        }
+    }
+
     private sealed class StartupFactory : WebApplicationFactory<CreateProjectRequest>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)

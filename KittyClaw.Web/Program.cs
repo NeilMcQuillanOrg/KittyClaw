@@ -78,11 +78,15 @@ if (networkAccess.Enabled)
     builder.WebHost.ConfigureKestrel(options => options.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate));
     var urls = builder.Configuration["urls"] ?? "http://localhost:5230";
     builder.WebHost.UseUrls($"{urls};https://*:{networkAccess.Port}");
-    // Keep DNS-rebinding protection: allow concrete machine names and interface addresses only.
+    // Keep DNS-rebinding protection. Trusted-network deployments can explicitly allow DNS names.
+    string[] trustedNetworkHosts = builder.Configuration.GetValue<bool>("NetworkAccess:TrustedNetwork")
+        ? (builder.Configuration["AllowedHosts"] ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        : Array.Empty<string>();
     builder.Services.PostConfigure<HostFilteringOptions>(options =>
     {
         options.AllowedHosts = new[] { "localhost", "127.0.0.1", "[::1]", Environment.MachineName }
-            .Concat(networkAccess.Addresses.Select(address => address.ToString())).ToArray();
+            .Concat(networkAccess.Addresses.Select(address => address.ToString()))
+            .Concat(trustedNetworkHosts).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     });
     networkAccess.Listening = true;
 }

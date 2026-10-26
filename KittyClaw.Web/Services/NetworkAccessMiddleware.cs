@@ -7,9 +7,10 @@ using QRCoder;
 namespace KittyClaw.Web.Services;
 
 /// <summary>Runs before every endpoint, static upload and Blazor handshake.</summary>
-public sealed class NetworkAccessMiddleware(RequestDelegate next)
+public sealed class NetworkAccessMiddleware(RequestDelegate next, IConfiguration? configuration = null)
 {
     private const string Cookie = "__Host-KittyClawAccess";
+    private readonly bool trustedNetwork = configuration?.GetValue<bool>("NetworkAccess:TrustedNetwork") ?? false;
 
     internal static bool IsLocal(HttpContext context)
     {
@@ -68,6 +69,13 @@ public sealed class NetworkAccessMiddleware(RequestDelegate next)
                 context.Response.Redirect("/");
                 return;
             }
+            await next(context);
+            return;
+        }
+        // Explicitly trust clients reaching ordinary listeners, never the managed public tunnel.
+        // Origin checks and local-only setup restrictions above still apply.
+        if (this.trustedNetwork && context.Features.Get<RemoteTunnelRequest>() is null)
+        {
             await next(context);
             return;
         }

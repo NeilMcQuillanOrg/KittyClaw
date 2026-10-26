@@ -26,7 +26,43 @@ direct LAN connections. The dedicated origin for managed public access is docume
 remote requests through localhost: loopback access is intentionally trusted for
 local automation.
 
-## Request protection
+## Trusted-network mode (explicit opt-in)
+
+Set `NetworkAccess:TrustedNetwork=true` (environment variable
+`NetworkAccess__TrustedNetwork=true`) to allow unauthenticated HTTP or HTTPS on
+ordinary listeners, without authenticator enrollment or session cookies. The
+default is false. Restart after changing the setting.
+
+Binding and host filtering remain separate. For example, from the repository root:
+
+```bash
+NetworkAccess__TrustedNetwork=true \
+ASPNETCORE_URLS='http://0.0.0.0:5230' \
+AllowedHosts='localhost;127.0.0.1;[::1];192.168.1.10' \
+dotnet run --project KittyClaw.Web --no-launch-profile
+```
+
+Replace `192.168.1.10` with the server's LAN address and add any DNS names used
+to access it to the semicolon-separated `AllowedHosts` list. In trusted-network
+mode these explicit hosts are also retained when authenticator access was
+previously enabled, alongside the machine name and current interface addresses.
+For `dotnet watch`, use `--no-launch-profile` as well: the default launch profile
+otherwise overrides `ASPNETCORE_URLS` with `http://localhost:5230`.
+
+This mode trusts **every client able to reach the listener**, not just private
+IP ranges, and grants full UI, API and enabled MCP access including agent
+execution. Restrict the backend port with your firewall. If exposing the app
+through Caddy/Authelia, enforce authentication there and do not expose the backend
+port publicly. This flag alone does not configure reverse-proxy forwarded headers:
+the existing exact-origin checks still apply, so HTTPS termination needs separate,
+explicitly trusted proxy configuration before cross-scheme browser requests work.
+Do not strip Origin headers to work around those checks.
+
+Cross-origin browser protections remain active, and `/network-setup` and
+`/remote-setup` remain local-only. The managed public tunnel never inherits this
+bypass and still requires KittyClaw HTTPS/session authentication.
+
+## Request protection (default mode)
 
 `NetworkAccessMiddleware` runs before application endpoints and uploaded files.
 Global response headers block framing, embedded objects and MIME sniffing, and
